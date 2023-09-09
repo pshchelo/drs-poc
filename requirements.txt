@@ -1,0 +1,3 @@
+kopf
+openstacksdk
+prometheus-client
