@@ -1,0 +1,13 @@
+apiVersion: lcm.mirantis.com/v1alpha1
+kind: DRSConfig
+metadata:
+  name: test
+  namespace: openstack
+spec:
+  timeout: 10
+  collector:
+    name: poc
+  scheduler:
+    name: poc
+  mover:
+    name: poc
