@@ -1,0 +1,7 @@
+*.py[cdo]
+*.egg*
+.tox/
+.venv/
+.envrc
+AUTHORS
+ChangeLog
