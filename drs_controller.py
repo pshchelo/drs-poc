@@ -1,3 +1,4 @@
+import datetime as dt
 import time
 import typing
 
@@ -7,9 +8,13 @@ import prometheus_api_client as pc
 import pykube as pk
 
 DEFAULT_LOAD_LIMIT = 30
-# PROMETHHEUS_HOST = "http://prometheus-server.stacklight"
-PROMETHHEUS_HOST = "http://10.172.1.105"
-prom = pc.PrometheusConnect(url=PROMETHHEUS_HOST, disable_ssl=True)
+DEFAULT_NODE_METRIC = "node_load5"
+DEFAULT_INSTANCE_METRIC = "libvirt_domain_info_cpu_time_seconds:rate5m"
+DEFAULT_MIGRATION_TIMEOUT = 180
+DEFAULT_MIGRATION_POLLING_INTERVAL = 5
+PROMETHEUS_HOST = "http://prometheus-server.stacklight"
+
+prom = pc.PrometheusConnect(url=PROMETHEUS_HOST, disable_ssl=True)
 cloud = openstack.connect()
 k8s = pk.HTTPClient(pk.KubeConfig.from_env())
 
@@ -49,61 +54,109 @@ def drs(stopped, logger, spec, **kwargs):
 
 def poc_collector(logger, **kwargs) -> dict:
     logger.info("collecting data")
-    logger.info(f"got kwargs {kwargs}")
-    compute_nodes = [
-        n.name
-        for n in pk.Node.objects(k8s).filter(
-            selector={"openstack-compute-node": "enabled"}
-        )
-    ]
-    # TODO: check what limit is there for the size of node_str
-    # node_str = "|".join(compute_nodes)
-    # prom.target(f"node_load5{{node=~'{node_str}'}}")
+    node_metric = kwargs.get("node_metric", DEFAULT_NODE_METRIC)
+    instance_metric = kwargs.get("instance_metric", DEFAULT_INSTANCE_METRIC)
+    node_metrics = prom.custom_query(
+        f"{node_metric} and on(node) "
+        f"label_replace("
+        f'kube_node_labels{{label_openstack_compute_node="enabled"}},'
+        f'"node", "$1", "node", "(.*)")'
+    )
+    logger.info("collected compute node load")
     metrics = {}
-    for node in compute_nodes:
-        node_load = prom.get_current_metric_value(
-            "node_load5", label_config={"node": node}
-        )
-        # NOTE: MetricSnapshotDataFrame fails if given empty list
-        # when metrics are absent
-        if node_load:
-            node_load = pc.MetricSnapshotDataFrame(node_load)
-        metrics[node] = {"node_load": node_load}
-        metrics[node]["instances"] = list(
-            cloud.compute.servers(host=node, all_projects=True)
-        )
-        # NOTE: MetricSnapshotDataFrame fails if given empty list
-        # when metrics are absent
+    # FIXME: can node_metrics be empty?
+    metrics["nodes"] = pc.MetricSnapshotDataFrame(node_metrics)
+    # TODO: get all instance load grouped by node in single call
+    for node in metrics["nodes"].node:
+        metrics[node] = {}
         instance_load = prom.get_current_metric_value(
-            "libvirt_domain_info_cpu_time_seconds:rate5m",
+            instance_metric,
             label_config={"node": node},
         )
+        logger.info(f"collected instance load for node {node}")
+        # NOTE: MetricSnapshotDataFrame fails if given empty list
+        # when metrics are absent
         if instance_load:
             instance_load = pc.MetricSnapshotDataFrame(instance_load)
         metrics[node]["instance_load"] = instance_load
-    logger.info(f"got {len(metrics)} cmp node metrics")
+        metrics[node]["instances"] = list(
+            cloud.compute.servers(host=node, all_projects=True)
+        )
+        logger.info(f"collected instance list for node {node}")
+    logger.info(f"got {len(metrics['nodes'])} cmp node metrics")
     return metrics
 
 
 def poc_scheduler(metrics: dict, logger, **kwargs) -> typing.Any:
-    logger.info("choosing target")
-    logger.info(f"got kwargs {kwargs}")
-    logger.info(f"got metrics {metrics}")
-    # load_limit = kwargs.get("load_threshold", DEFAULT_LOAD_LIMIT)
+    """Chooses the most CPU-intensive instance away from overloaded node
+
+    without any target for migration
+    """
+    logger.info("choosing subjects and targets")
+    load_limit = kwargs.get("load_threshold", DEFAULT_LOAD_LIMIT)
+    node_load = metrics["nodes"]
+    overloaded_nodes = node_load[node_load.value > load_limit]
+    logger.info(f"overloaded nodes: {list(overloaded_nodes.node)}")
     decisions = []
+    for node in overloaded_nodes.node:
+        inst_load = metrics[node]["instance_load"]
+        if len(inst_load) == 0:
+            logger.info(f"no load info for instances on {node}")
+            continue
+        max_load_instance_id = inst_load.iloc[
+            inst_load.value.idxmax()
+        ].instance_uuid
+        max_load_instance = [
+            i
+            for i in metrics[node]["instances"]
+            if i.id == max_load_instance_id
+        ][0]
+        if max_load_instance.status == "ACTIVE":
+            decisions.append((max_load_instance, None))
+    logger.info(f"{len(decisions)} decisions to execute")
     return decisions
 
 
 def poc_mover(decisions, logger, **kwargs) -> None:
-    logger.info(f"got kwargs {kwargs}")
+    """Live-migrates instances to targets"""
+    migration_timeout = dt.timedelta(
+        seconds=kwargs.get("migration_timeout", DEFAULT_MIGRATION_TIMEOUT)
+    )
+    migration_polling_interval = kwargs.get("migration_polling_interval",
+                                            DEFAULT_MIGRATION_POLLING_INTERVAL)
     logger.info("execiting decisions")
     # TODO: parallelize
+    failed = []
     for d in decisions:
         instance, target = d
-        # TODO: wait for finish
+        source_host = instance.compute_host
         cloud.compute.live_migrate_server(
             instance, host=target, block_migration="auto"
         )
+        logger.info("requested migration for server", instance.id)
+        start = dt.datetime.now()
+        while dt.datetime.now() - start < migration_timeout:
+            time.sleep(migration_polling_interval)
+            logger.info("polling server", instance.id)
+            instance = cloud.get_server(instance.id, all_projects=True)
+            if instance.status == "ERROR":
+                failed.append(f"failed to migrate server {instance.id}")
+                logger.error(f"server {instance.id} went to error")
+                break
+            if (
+                instance.status == "ACTIVE"
+                and instance.compute_host != source_host
+            ):
+                logger.info(f"server {instance.id} successfully migrated "
+                            "to node {instance.compute_host}")
+                break
+            # TODO: check instance migrations, could be migration failed
+            # and instance left on source, no need to wait until timeout
+        else:
+            failed.append(f"failed to migrate server {instance.id} within time")
+            logger.error(f"failed to migrate server {instance.id} within time")
+    if failed:
+        logger.error("FAILED MIGRATIONS: " + "; ".join(failed))
 
 
 # TODO: replace with proper plugin system (like stevedore)
