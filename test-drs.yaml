@@ -4,10 +4,11 @@ metadata:
   name: test
   namespace: openstack
 spec:
-  timeout: 10
+  reconcileInterval: 300
   collector:
     name: poc
   scheduler:
     name: poc
+    load_threshold: 30
   mover:
     name: poc

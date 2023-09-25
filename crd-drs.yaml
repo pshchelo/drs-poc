@@ -25,13 +25,13 @@ spec:
               type: object
             spec:
               required:
-                - timeout
+                - reconcileInterval
                 - collector
                 - scheduler
                 - mover
               type: object
               properties:
-                timeout:
+                reconcileInterval:
                   type: integer
                 collector:
                   type: object
