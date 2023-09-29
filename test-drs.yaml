@@ -9,6 +9,6 @@ spec:
     name: poc
   scheduler:
     name: poc
-    load_threshold: 30
+    load_threshold: 7
   mover:
     name: poc

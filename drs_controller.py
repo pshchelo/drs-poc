@@ -36,14 +36,14 @@ def drs(stopped, logger, name, namespace, spec, **kwargs):
     # TODO: replace with proper plugin system (like stevedore)
     collector_opts = spec["collector"]
     collector_func = METHOD_REGISTRY["collectors"].get(
-        collector_opts.pop("name")
+        collector_opts.get("name")
     )
     scheduler_opts = spec["scheduler"]
     scheduler_func = METHOD_REGISTRY["schedulers"].get(
-        scheduler_opts.pop("name")
+        scheduler_opts.get("name")
     )
     mover_opts = spec["mover"]
-    mover_func = METHOD_REGISTRY["movers"].get(mover_opts.pop("name"))
+    mover_func = METHOD_REGISTRY["movers"].get(mover_opts.get("name"))
     if not (collector_func and scheduler_func and mover_func):
         logger.error("Some functions could not be resolved")
         raise kopf.PermanentError
@@ -136,10 +136,10 @@ def poc_mover(decisions: list, logger, **kwargs) -> None:
     for d in decisions:
         instance, target = d
         source_host = instance.compute_host
+        logger.info(f"requesting migration for server {instance.id}")
         cloud.compute.live_migrate_server(
             instance, host=target, block_migration="auto"
         )
-        logger.info(f"requested migration for server {instance.id}")
         start = dt.datetime.now()
         while dt.datetime.now() - start < migration_timeout:
             time.sleep(migration_polling_interval)
