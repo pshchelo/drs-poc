@@ -1,4 +1,0 @@
-kopf
-openstacksdk
-prometheus-api-client
-pykube-ng

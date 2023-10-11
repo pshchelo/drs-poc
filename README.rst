@@ -1,21 +1,22 @@
-# TODO
+TODO
+====
 
-## Infra
-- make it a proper installable package
-- split to many files
+Infra
+-----
 - add Dockerfile
-- add helm chart
+- ? add helm chart
 - ? add docker-compose support
 
-## Code
-- add proper plugin support
+Code
+----
 - add proper error handling
 - ensure proper request timeout handling
 - add tests
 
-## Features
+Features
+--------
 - Holistic target choice
-- Better scheduler tha won't move instance back and forth
+- Better scheduler that won't move instance back and forth
 - find/compose more suitable metric for load
   which is independent of number of cores
 - each CR watches over subset of compute nodes, allowing to

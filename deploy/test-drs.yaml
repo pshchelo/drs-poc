@@ -6,9 +6,9 @@ metadata:
 spec:
   reconcileInterval: 300
   collector:
-    name: poc
+    name: stacklight
   scheduler:
-    name: poc
+    name: ease-most-loaded
     load_threshold: 7
   mover:
-    name: poc
+    name: os-live-migration
