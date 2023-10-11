@@ -1,0 +1,22 @@
+name: drs
+services:
+  controller:
+    image: pshchelo/drs-controller
+    build: .
+    command: kopf run -m drs_controller.controller -n openstack --dev --standalone
+    # required to use sshuttle proxying to remote k8s to simulate running in k8s
+    # is relatively safe as this given controller for now does not expose any ports
+    network_mode: host
+    configs:
+    - source: clouds
+      target: /etc/openstack/clouds.yaml
+    - source: kubeconfig
+      target: /etc/openstack/kubeconfig.yaml
+    environment:
+      KUBECONFIG: /etc/openstack/kubeconfig.yaml
+      OS_CLOUD: ${OS_CLOUD:?no cloud name provided}
+configs:
+  clouds:
+    file: ${OS_CLOUD_CONFIG:-~/.config/openstack/clouds.yaml}
+  kubeconfig:
+    file: ${KUBECONFIG:?no kubeconfig provided}

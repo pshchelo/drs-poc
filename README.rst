@@ -3,9 +3,8 @@ TODO
 
 Infra
 -----
-- add Dockerfile
 - ? add helm chart
-- ? add docker-compose support
+- ? add kustomize support
 
 Code
 ----
